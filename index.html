@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Starlit Catcher</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(circle at top, #0c1230 0%, #05040e 50%, #010102 100%);
+        color: #f3f5ff;
+      }
+
+      main {
+        width: min(90vw, 960px);
+        padding: 1rem;
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 1.5rem;
+      }
+
+      canvas {
+        width: 100%;
+        background: rgba(5, 8, 32, 0.85);
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        border-radius: 1rem;
+        aspect-ratio: 4 / 3;
+      }
+
+      .panel {
+        background: rgba(255, 255, 255, 0.07);
+        border-radius: 1rem;
+        padding: 1rem;
+        box-shadow: 0 10px 35px rgba(0, 0, 0, 0.25);
+      }
+
+      h1 {
+        margin: 0 0 0.4rem;
+        font-size: clamp(1.5rem, 2.5vw, 2.5rem);
+      }
+
+      p {
+        line-height: 1.5;
+      }
+
+      dl {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 0.25rem 0.75rem;
+        margin: 1rem 0;
+      }
+
+      dt {
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        font-size: 0.8rem;
+        color: #b5c1ff;
+      }
+
+      dd {
+        margin: 0;
+        font-size: 1.1rem;
+      }
+
+      button {
+        width: 100%;
+        padding: 0.75rem 1rem;
+        border-radius: 0.75rem;
+        border: none;
+        font-size: 1rem;
+        font-weight: 600;
+        cursor: pointer;
+        background: linear-gradient(90deg, #ff8f70, #ff3d54);
+        color: white;
+        box-shadow: 0 10px 20px rgba(255, 61, 84, 0.35);
+      }
+
+      button:active {
+        transform: translateY(2px);
+      }
+
+      @media (max-width: 720px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+
+        canvas {
+          aspect-ratio: auto;
+          height: 60vh;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <canvas id="game" width="640" height="480" aria-label="Arcade game canvas"></canvas>
+      <section class="panel" aria-live="polite">
+        <h1>Starlit Catcher</h1>
+        <p>
+          Slide your hovercraft with the <strong>arrow keys</strong> or <strong>A/D</strong> to catch
+          falling stars. Miss three stars and the nebula dims!
+        </p>
+        <dl>
+          <dt>Score</dt>
+          <dd id="score">0</dd>
+          <dt>Multiplier</dt>
+          <dd id="mult">1x</dd>
+          <dt>Misses</dt>
+          <dd id="misses">0 / 3</dd>
+        </dl>
+        <button id="restart" type="button">Restart</button>
+      </section>
+    </main>
+    <script>
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const scoreEl = document.getElementById("score");
+      const multEl = document.getElementById("mult");
+      const missEl = document.getElementById("misses");
+      const restartBtn = document.getElementById("restart");
+
+      const state = {
+        player: { x: canvas.width / 2, y: canvas.height - 60, width: 80, height: 15, speed: 6 },
+        stars: [],
+        score: 0,
+        multiplier: 1,
+        misses: 0,
+        playing: true,
+        keys: new Set(),
+      };
+
+      function randomColor() {
+        const palette = ["#ffd166", "#06d6a0", "#118ab2", "#ef476f", "#f8ffe5"];
+        return palette[Math.floor(Math.random() * palette.length)];
+      }
+
+      function spawnStar() {
+        const radius = 10 + Math.random() * 12;
+        state.stars.push({
+          x: Math.random() * (canvas.width - radius * 2) + radius,
+          y: -radius,
+          vy: 2 + Math.random() * 2 + state.score * 0.005,
+          radius,
+          color: randomColor(),
+        });
+      }
+
+      function drawPlayer() {
+        const { x, y, width, height } = state.player;
+        const gradient = ctx.createLinearGradient(x, y, x + width, y);
+        gradient.addColorStop(0, "#4facfe");
+        gradient.addColorStop(1, "#00f2fe");
+        ctx.fillStyle = gradient;
+        ctx.fillRect(x - width / 2, y, width, height);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(x - width / 2 + 10, y + height - 4, width - 20, 3);
+      }
+
+      function drawStar(star) {
+        ctx.beginPath();
+        ctx.fillStyle = star.color;
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = star.color;
+        ctx.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+
+      function updatePlayer() {
+        const { player, keys } = state;
+        if (keys.has("ArrowLeft") || keys.has("a")) {
+          player.x -= player.speed;
+        }
+        if (keys.has("ArrowRight") || keys.has("d")) {
+          player.x += player.speed;
+        }
+        player.x = Math.max(player.width / 2, Math.min(canvas.width - player.width / 2, player.x));
+      }
+
+      function updateStars() {
+        const catchLine = state.player.y;
+        const halfWidth = state.player.width / 2;
+        state.stars.forEach((star) => {
+          star.y += star.vy;
+          const inHorizontalRange = Math.abs(star.x - state.player.x) < halfWidth + star.radius;
+          const inVerticalRange = star.y + star.radius >= catchLine && star.y - star.radius <= catchLine + state.player.height;
+          if (inHorizontalRange && inVerticalRange && star.vy > 0) {
+            star.caught = true;
+            star.vy = -star.vy * 0.6;
+            star.y = catchLine - star.radius;
+            incrementScore();
+          }
+        });
+
+        const leftover = [];
+        for (const star of state.stars) {
+          if (star.y - star.radius > canvas.height + 20) {
+            registerMiss();
+          } else if (!star.caught || star.y + star.radius > 0) {
+            leftover.push(star);
+          }
+        }
+        state.stars = leftover;
+      }
+
+      function incrementScore() {
+        state.score += 5 * state.multiplier;
+        state.multiplier = Math.min(10, state.multiplier + 0.2);
+      }
+
+      function registerMiss() {
+        state.misses += 1;
+        state.multiplier = 1;
+        if (state.misses >= 3) {
+          state.playing = false;
+          showGameOver();
+        }
+      }
+
+      function showGameOver() {
+        ctx.save();
+        ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 42px 'Segoe UI', sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("Mission Failed", canvas.width / 2, canvas.height / 2 - 20);
+        ctx.font = "24px 'Segoe UI', sans-serif";
+        ctx.fillText(`Final Score: ${state.score}`, canvas.width / 2, canvas.height / 2 + 20);
+        ctx.restore();
+      }
+
+      function drawHUD() {
+        scoreEl.textContent = state.score.toString();
+        multEl.textContent = state.multiplier.toFixed(1).replace(/\.0$/, "") + "x";
+        missEl.textContent = `${state.misses} / 3`;
+      }
+
+      function loop() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const bg = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        bg.addColorStop(0, "rgba(14, 19, 52, 0.95)");
+        bg.addColorStop(1, "rgba(1, 1, 10, 0.95)");
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        updatePlayer();
+        updateStars();
+        for (const star of state.stars) {
+          drawStar(star);
+        }
+        drawPlayer();
+        drawHUD();
+
+        if (state.playing) {
+          requestAnimationFrame(loop);
+        }
+      }
+
+      let spawnTimer = 0;
+      function spawnLoop(timestamp) {
+        if (!state.playing) return;
+        if (!spawnLoop.lastTime) {
+          spawnLoop.lastTime = timestamp;
+        }
+        spawnTimer += timestamp - spawnLoop.lastTime;
+        spawnLoop.lastTime = timestamp;
+        const interval = Math.max(350, 1000 - state.score * 2);
+        if (spawnTimer >= interval) {
+          spawnStar();
+          spawnTimer = 0;
+        }
+        requestAnimationFrame(spawnLoop);
+      }
+
+      restartBtn.addEventListener("click", restartGame);
+      document.addEventListener("keydown", (event) => {
+        state.keys.add(event.key);
+      });
+      document.addEventListener("keyup", (event) => {
+        state.keys.delete(event.key);
+      });
+
+      function restartGame() {
+        state.stars = [];
+        state.score = 0;
+        state.multiplier = 1;
+        state.misses = 0;
+        state.playing = true;
+        state.player.x = canvas.width / 2;
+        spawnLoop.lastTime = 0;
+        spawnTimer = 0;
+        requestAnimationFrame(loop);
+        requestAnimationFrame(spawnLoop);
+      }
+
+      restartGame();
+    </script>
+  </body>
+</html>
